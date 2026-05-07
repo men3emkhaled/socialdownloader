@@ -16,18 +16,25 @@ if DATABASE_URL:
     if DATABASE_URL.startswith("postgresql://"):
         DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
     
-    # Remove channel_binding if present as it might cause issues with asyncpg
-    if "channel_binding=" in DATABASE_URL:
+    # Clean the URL from parameters that asyncpg doesn't like (sslmode, channel_binding)
+    if "?" in DATABASE_URL:
         url_parts = list(urlparse.urlparse(DATABASE_URL))
         query = dict(urlparse.parse_qsl(url_parts[4]))
+        
+        # Check if we need SSL
+        use_ssl = query.get('sslmode') == 'require' or 'sslmode' in query
+        
+        # Remove incompatible keys
+        query.pop('sslmode', None)
         query.pop('channel_binding', None)
+        
         url_parts[4] = urlencode(query)
         DATABASE_URL = urlparse.urlunparse(url_parts)
 
 engine = create_async_engine(
     DATABASE_URL, 
     echo=False,
-    connect_args={"ssl": "require"} if "sslmode=require" in DATABASE_URL else {}
+    connect_args={"ssl": True} # Neon requires SSL
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()

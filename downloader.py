@@ -1,6 +1,7 @@
 import yt_dlp
 import os
 import asyncio
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 class Downloader:
@@ -64,11 +65,39 @@ class Downloader:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # If it was audio, extension changed to mp3
+            # If it was audio mode, extension changed to mp3
             if mode == "audio":
                 filename = os.path.splitext(filename)[0] + ".mp3"
+                return filename, info.get('title', 'audio')
+
+            # --- Special Logic: Convert Audio to Black Screen Video ---
+            # Check if the downloaded file is actually audio but video was requested
+            # Some platforms like SoundCloud only provide audio
+            actual_ext = os.path.splitext(filename)[1].lower()
+            if actual_ext in ['.mp3', '.m4a', '.ogg', '.wav', '.opus', '.flac']:
+                video_filename = os.path.splitext(filename)[0] + "_video.mp4"
+                
+                # ffmpeg command to create black screen with audio
+                # -f lavfi -i color=c=black:s=1280x720:r=25 -> creates black video
+                # -shortest -> makes video duration match audio duration
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:r=25',
+                    '-i', filename,
+                    '-c:v', 'libx264', '-tune', 'stillimage',
+                    '-c:a', 'aac', '-b:a', '192k',
+                    '-shortest', video_filename
+                ]
+                
+                try:
+                    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    # Remove original audio file and use the new video
+                    os.remove(filename)
+                    filename = video_filename
+                except Exception as e:
+                    print(f"FFmpeg error: {e}")
             
-            # Ensure we have the correct extension (yt-dlp might merge to mkv or others)
+            # Final check for actual filename (for cases where yt-dlp changes extension)
             if not os.path.exists(filename):
                 base = os.path.splitext(filename)[0]
                 for f in os.listdir(self.download_path):

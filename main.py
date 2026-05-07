@@ -23,11 +23,22 @@ dp = Dispatcher()
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await get_or_create_user(message.from_user.id, message.from_user.username)
-    await message.answer(
-        "👋 أهلاً بيك في بوت التحميل!\n\n"
-        "ابعتلي أي لينك فيديو (فيسبوك، تيك توك، إنستجرام، ساوند كلاود) وأنا هبعتهولك فيديو على طول.\n\n"
-        "💡 البوت بيدعم معظم المواقع المشهورة."
+    
+    welcome_text = (
+        f"👋 **أهلاً بك يا {message.from_user.first_name}!**\n\n"
+        "أنا بوت تحميل الميديا الشامل. أستطيع التحميل من أغلب منصات التواصل الاجتماعي بأعلى جودة ممكنة.\n\n"
+        "**📌 المنصات المدعومة:**\n"
+        "• Facebook 🔵 | TikTok ⚫ | Instagram 📱\n"
+        "• YouTube 🔴 | Twitter (X) 🐦 | Pinterest 📌\n"
+        "• SoundCloud 🎵 | Threads 🧵 | والمزيد...\n\n"
+        "**📝 كيف تستخدم البوت؟**\n"
+        "1️⃣ أرسل رابط الفيديو أو المقطع الصوتي.\n"
+        "2️⃣ اختر الجودة المطلوبة (فيديو عالي، منخفض، أو صوت).\n"
+        "3️⃣ انتظر ثواني وسأرسل لك الملف مباشرة!\n\n"
+        "⚠️ **ملاحظة:** الحد الأقصى للملفات هو 50 ميجابايت (قيود تليجرام)."
     )
+    
+    await message.answer(welcome_text, parse_mode="Markdown")
 
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -50,12 +61,15 @@ async def handle_url(message: types.Message):
         # Create buttons
         builder = InlineKeyboardBuilder()
         builder.row(
-            types.InlineKeyboardButton(text="فيديو 🎬", callback_data="dl_video"),
-            types.InlineKeyboardButton(text="صوت 🎵", callback_data="dl_audio")
+            types.InlineKeyboardButton(text="جودة عالية 🎬", callback_data="dl_video_high"),
+            types.InlineKeyboardButton(text="جودة منخفضة 📱", callback_data="dl_video_low")
+        )
+        builder.row(
+            types.InlineKeyboardButton(text="صوت فقط 🎵", callback_data="dl_audio")
         )
         
         await message.answer(
-            f"🎬 **{title}**\n\nاختار عايز تحمله فيديو ولا صوت؟",
+            f"🎬 **{title}**\n\nاختار عايز تحمله بأي جودة؟",
             reply_markup=builder.as_markup()
         )
         
@@ -72,23 +86,25 @@ async def process_download(callback: types.CallbackQuery):
         await callback.answer("❌ اللينك انتهى مدته، ابعته تاني.", show_alert=True)
         return
 
-    is_audio = callback.data == "dl_audio"
-    action = "صوت" if is_audio else "فيديو"
+    mode = callback.data.replace("dl_", "")
+    action = "الملف"
+    if mode == "audio": action = "الصوت"
+    elif "video" in mode: action = "الفيديو"
     
-    await callback.message.edit_text(f"⏳ جاري تجهيز الـ {action}... استنى لحظة.")
+    await callback.message.edit_text(f"⏳ جاري تجهيز {action}... استنى لحظة.")
     
     try:
-        file_path, title = await downloader.download_video(url, is_audio=is_audio)
+        file_path, title = await downloader.download_video(url, mode=mode)
         
         if not os.path.exists(file_path):
             await callback.message.edit_text("❌ حصلت مشكلة في التحميل.")
             return
 
-        await callback.message.edit_text(f"📤 جاري رفع الـ {action}...")
+        await callback.message.edit_text(f"📤 جاري رفع {action}...")
         
         bot_info = await bot.get_me()
         
-        if is_audio:
+        if mode == "audio":
             audio = FSInputFile(file_path)
             await callback.message.answer_audio(
                 audio=audio, 

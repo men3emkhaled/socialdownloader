@@ -29,42 +29,85 @@ async def start_cmd(message: types.Message):
         "💡 البوت بيدعم معظم المواقع المشهورة."
     )
 
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# Global URL cache (simple way for now)
+url_cache = {}
+
 @dp.message(F.text.startswith("http"))
 async def handle_url(message: types.Message):
     url = message.text.strip()
-    status_msg = await message.answer("🔍 جاري فحص اللينك والتحميل... استنى لحظة.")
     
     try:
-        # Download the video
-        file_path, title = await downloader.download_video(url)
+        # Extract info first
+        info = await downloader.get_info(url)
+        title = info.get('title', 'Video')
         
-        if not os.path.exists(file_path):
-            await status_msg.edit_text("❌ للأسف مقدرتش أحمل الفيديو ده. جرب لينك تاني.")
-            return
-
-        await status_msg.edit_text(f"📤 جاري رفع الفيديو: {title}...")
+        # Store URL in cache
+        cache_key = str(message.from_user.id)
+        url_cache[cache_key] = url
         
-        # Send to Telegram
-        bot_info = await bot.get_me()
-        video = FSInputFile(file_path)
-        await message.answer_video(
-            video=video, 
-            caption=f"🎬 {title}\n\nDone by @{bot_info.username}"
+        # Create buttons
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            types.InlineKeyboardButton(text="فيديو 🎬", callback_data="dl_video"),
+            types.InlineKeyboardButton(text="صوت 🎵", callback_data="dl_audio")
         )
         
-        # Delete local file to save space
-        os.remove(file_path)
-        await status_msg.delete()
+        await message.answer(
+            f"🎬 **{title}**\n\nاختار عايز تحمله فيديو ولا صوت؟",
+            reply_markup=builder.as_markup()
+        )
         
     except Exception as e:
-        logger.error(f"Error: {e}")
-        error_msg = str(e)
-        if "File is too large" in error_msg or "max_filesize" in error_msg:
-            await status_msg.edit_text("⚠️ الفيديو حجمه كبير جداً (أكبر من 50 ميجا)، التليجرام مش بيسمح برفعه من خلالي.")
-        else:
-            await status_msg.edit_text("❌ حصلت مشكلة وأنا بحمل الفيديو. اتأكد إن اللينك صح أو جرب فيديو تاني.")
+        logger.error(f"Error extracting info: {e}")
+        await message.answer("❌ مقدرتش أتعرف على اللينك ده. اتأكد إنه صح.")
+
+@dp.callback_query(F.data.startswith("dl_"))
+async def process_download(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    url = url_cache.get(user_id)
+    
+    if not url:
+        await callback.answer("❌ اللينك انتهى مدته، ابعته تاني.", show_alert=True)
+        return
+
+    is_audio = callback.data == "dl_audio"
+    action = "صوت" if is_audio else "فيديو"
+    
+    await callback.message.edit_text(f"⏳ جاري تجهيز الـ {action}... استنى لحظة.")
+    
+    try:
+        file_path, title = await downloader.download_video(url, is_audio=is_audio)
         
-        # Cleanup if file was created
+        if not os.path.exists(file_path):
+            await callback.message.edit_text("❌ حصلت مشكلة في التحميل.")
+            return
+
+        await callback.message.edit_text(f"📤 جاري رفع الـ {action}...")
+        
+        bot_info = await bot.get_me()
+        
+        if is_audio:
+            audio = FSInputFile(file_path)
+            await callback.message.answer_audio(
+                audio=audio, 
+                caption=f"🎵 {title}\n\nDone by @{bot_info.username}"
+            )
+        else:
+            video = FSInputFile(file_path)
+            await callback.message.answer_video(
+                video=video, 
+                caption=f"🎬 {title}\n\nDone by @{bot_info.username}"
+            )
+        
+        # Cleanup
+        os.remove(file_path)
+        await callback.message.delete()
+        
+    except Exception as e:
+        logger.error(f"Download error: {e}")
+        await callback.message.edit_text("❌ حصلت مشكلة أثناء التحميل. ممكن يكون الملف حجمه كبير جداً.")
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
 
